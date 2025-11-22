@@ -8,6 +8,7 @@ class RobotControl():
     def __init__(self, robot_ip):
         self.robot_ip=robot_ip
         self.running=False
+        self.obstacle_stopped=False
         pass
 
     def robot_connect(self):
@@ -23,6 +24,7 @@ class RobotControl():
     
         count_complete=True
         count=int(count)*10
+        buffer = ""
         
         while True:
             
@@ -31,29 +33,33 @@ class RobotControl():
                 data = s.recv(1024)
                 if data:
                     
-                    data = data.decode("utf-8") 
-                    print(data)
+                    data = data.decode("utf-8")
+                    buffer += data
                     
-                    if data == "{Heartbeat}":
-                        print("Got Heartbeat, sending...")
-                        s.sendall("{Heartbeat}".encode('utf-8'))
+                    # Process complete messages
+                    while "}" in buffer:
+                        end_pos = buffer.find("}")
+                        message = buffer[:end_pos+1]
+                        buffer = buffer[end_pos+1:]
+                        
+                        if message == "{Heartbeat}":
+                            print("Got Heartbeat, sending...")
+                            s.sendall("{Heartbeat}".encode('utf-8'))
 
-
-                    if callback!=None:
-                        res=callback(data)
-                        # if the callback fails, return false
-                        if res==False:
-                            # tell the caller that the count did not complete
-                            count_complete=False
-                            break;
+                        if callback!=None:
+                            res=callback(message)
+                            # if the callback fails, return false
+                            if res==False:
+                                # tell the caller that the count did not complete
+                                count_complete=False
+                                return count_complete  # Exit immediately
                         
             except socket.timeout as e:
                 pass
+            except (ConnectionResetError, BrokenPipeError) as e:
+                print(f"Connection error: {e}")
+                return False
             
-            # see if we detect anything on the sensors
-
-
-        
             count=count-1
             
             if count<=0:
@@ -63,86 +69,138 @@ class RobotControl():
             
     def robot_all_stop(self, s):
         
-        tosend={ "N":100}
+        try:
+            tosend={ "N":100}
+            s.sendall(json.dumps(tosend).encode('utf-8'))
+            s.close()
+        except (ConnectionResetError, BrokenPipeError, OSError) as e:
+            print(f"Error stopping robot: {e}")
+            try:
+                s.close()
+            except:
+                pass
         
-        s.sendall(json.dumps(tosend).encode('utf-8'))
-        
-        s.close()
         self.running=False
 
     def robot_forward(self, count):
         
         s=self.robot_connect()
         
-        print("Sending command...")
-        tosend={"H": 22, "N": 1, "D1": 0, "D2": 50, "D3": 1}
-    
+        print(f"Starting forward movement for {count} seconds with obstacle detection...")
+        # Start continuous forward movement
+        tosend={"H": 22, "N": 3, "D1": 3, "D2": 50}
         s.sendall(json.dumps(tosend).encode('utf-8'))
-    
+        
+        obstacle_detected = False
+        
         def state_check(data):
-            # we get called on a heartbeat and also on the sensor state reply
-            # so we need to only check the sensor state result
-            return_val=True
-
-            sensor_state=None
-            if "true" in data:
-                sensor_state=True
-                # we have seen somthing, so return false meaning stop
-                return_val=False
-            elif "false" in data:
-                sensor_state=False
-            else:
-                # ok, reply was not from the heartbeat, so reask sensor state
-                # 1 : Check whether an obstacle is detected.            
+            nonlocal obstacle_detected
+            
+            if data == "{Heartbeat}":
+                # On each heartbeat, check for obstacles
                 tosend={"H": 22, "N": 21, "D1": 1}
-                s.sendall(json.dumps(tosend).encode('utf-8'))        
+                s.sendall(json.dumps(tosend).encode('utf-8'))
+            elif "true" in data:
+                print("Obstacle detected during movement - stopping")
+                obstacle_detected = True
+                self.obstacle_stopped = True
+                return False  # Stop the heartbeat loop
+            elif "false" in data:
+                # No obstacle, continue moving
+                pass
+                
+            return True
 
-            return(return_val)
-
-        final_res=True
-
-        # if the heartbeat fails, its because the state_check returned false
-        # this means that we detected somthing from the sensor            
-        final_res = self.robot_heatbeat(s, count, state_check)
-
+        # Run for specified time or until obstacle detected
+        self.robot_heatbeat(s, count, state_check)
         self.robot_all_stop(s)
     
-        return(final_res)
+        return not obstacle_detected
 
 
+
+    def robot_backward(self, count):
+        
+        s=self.robot_connect()
+        
+        print(f"Starting backward movement for {count} seconds...")
+        # Start continuous backward movement (D1: 4 = backward)
+        tosend={"H": 22, "N": 3, "D1": 4, "D2": 50}
+        s.sendall(json.dumps(tosend).encode('utf-8'))
+        
+        self.robot_heatbeat(s, count)
+        self.robot_all_stop(s)
+    
+        return True
 
     def robot_rotate_left(self, count: int):
         
         s=self.robot_connect()
         
-        print("Sending command...")
+        print(f"Starting left rotation for {count} seconds with obstacle detection...")
         
         # D1 = direction, 
         # 1=left, 2=right, 3=forward, 4=back
         # D3 = speed
         tosend={"H": 22, "N": 3, "D1": 1, "D2": 50}
-    
         s.sendall(json.dumps(tosend).encode('utf-8'))
+        
+        obstacle_detected = False
+        
+        def state_check(data):
+            nonlocal obstacle_detected
+            
+            if data == "{Heartbeat}":
+                # On each heartbeat, check for obstacles
+                tosend={"H": 22, "N": 21, "D1": 1}
+                s.sendall(json.dumps(tosend).encode('utf-8'))
+            elif "true" in data:
+                print("Obstacle detected during rotation - stopping")
+                obstacle_detected = True
+                self.obstacle_stopped = True
+                return False  # Stop the heartbeat loop
+                
+            return True
     
-        self.robot_heatbeat(s, count)
+        self.robot_heatbeat(s, count, state_check)
         self.robot_all_stop(s)
+        
+        return not obstacle_detected
     
     
     def robot_rotate_right(self, count: int):
         
         s=self.robot_connect()
         
-        print("Sending command...")
+        print(f"Starting right rotation for {count} seconds with obstacle detection...")
         
         # D1 = direction, 
         # 1=left, 2=right, 3=forward, 4=back
         # D3 = speed
         tosend={"H": 22, "N": 3, "D1": 2, "D2": 50}
-    
         s.sendall(json.dumps(tosend).encode('utf-8'))
+        
+        obstacle_detected = False
+        
+        def state_check(data):
+            nonlocal obstacle_detected
+            
+            if data == "{Heartbeat}":
+                # On each heartbeat, check for obstacles
+                tosend={"H": 22, "N": 21, "D1": 1}
+                s.sendall(json.dumps(tosend).encode('utf-8'))
+            elif "true" in data:
+                print("Obstacle detected during rotation - stopping")
+                obstacle_detected = True
+                self.obstacle_stopped = True
+                return False  # Stop the heartbeat loop
+                
+            return True
     
-        self.robot_heatbeat(s, count)
+        self.robot_heatbeat(s, count, state_check)
         self.robot_all_stop(s)
+        
+        return not obstacle_detected
 
     def is_finished(self):
 
@@ -151,35 +209,71 @@ class RobotControl():
 
     
     def robot_detect_obstacle(self):
+        """
+        Check if an obstacle was detected during the last movement.
+        This returns the cached flag set by movement commands.
+        Assumes obstacles don't move between checks.
+        """
+        result = self.obstacle_stopped
+        if result:
+            print("Obstacle was detected during last movement")
+            self.obstacle_stopped = False  # Reset flag after reading
+        else:
+            print("No obstacle detected during last movement")
+        
+        return result      
+        
     
-        current_state=False
         
-        s=self.robot_connect()
+    def robot_camera_control(self, direction):
+        """
+        Control camera servo movement
+        direction: 1=tilt_down, 2=tilt_up, 3=pan_right, 4=pan_left, 5=center
+        """
+        s = self.robot_connect()
         
-        # 1 : Check whether an obstacle is detected.
-        # 2 : Check the value of the ultrasonic sensor
-        tosend={"H": 22, "N": 21, "D1": 1}
+        print(f"Moving camera: {['', 'tilt_down', 'tilt_up', 'pan_right', 'pan_left', 'center'][direction]}")
+        tosend = {"H": 22, "N": 106, "D1": direction}
         
         s.sendall(json.dumps(tosend).encode('utf-8'))
         
-        
-        def state_check(data):
-            nonlocal current_state
-            print("In data: "+str(data))
+        self.robot_heatbeat(s, 1)
+        self.robot_all_stop(s)
 
+    def robot_camera_pan_left(self, count):
+        """Pan camera left multiple times"""
+        for i in range(int(count)):
+            self.robot_camera_control(3)
+            time.sleep(0.1)
+        
+        # Check for obstacle after camera has moved
+        s = self.robot_connect()
+        tosend = {"H": 22, "N": 21, "D1": 1}
+        s.sendall(json.dumps(tosend).encode('utf-8'))
+        time.sleep(0.2)
+        try:
+            data = s.recv(1024).decode('utf-8')
             if "true" in data:
-                current_state=True
-            elif "false" in data:
-                current_state=False                
+                self.obstacle_stopped = True
+        except:
+            pass
+        self.robot_all_stop(s)
 
-            return(True)
-            
-        self.robot_heatbeat(s, 1, state_check) 
-        self.robot_all_stop(s)        
+    def robot_camera_pan_right(self, count):
+        """Pan camera right multiple times"""
+        for i in range(int(count)):
+            self.robot_camera_control(4)
+            time.sleep(0.1)
         
-        print("obstacle "+str(current_state))        
-        
-        return(current_state)      
-        
-    
-        
+        # Check for obstacle after camera has moved
+        s = self.robot_connect()
+        tosend = {"H": 22, "N": 21, "D1": 1}
+        s.sendall(json.dumps(tosend).encode('utf-8'))
+        time.sleep(0.2)
+        try:
+            data = s.recv(1024).decode('utf-8')
+            if "true" in data:
+                self.obstacle_stopped = True
+        except:
+            pass
+        self.robot_all_stop(s)

@@ -1,5 +1,5 @@
 
-PYTHON=python3.9
+PYTHON=python3.12
 
 
 run: venv/bin/activate

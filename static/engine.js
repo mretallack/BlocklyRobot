@@ -1,48 +1,90 @@
 
 
-function robot_forward(time) {
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+var stop_requested = false;
 
-    $.ajax({
-
-	    type: "POST",
-	    url: "forward",
-	    dataType: "json",
-        async: false,
-        contentType: "application/json; charset=utf-8",
-	    data: JSON.stringify({
-            time: time
-        })
-	});
+async function wait_for_finished() {
+    while (true) {
+        try {
+            const data = await $.ajax({
+                type: "GET",
+                url: "finished",
+                dataType: 'json'
+            });
+            if (data.finished) break;
+        } catch (e) {
+            if (stop_requested) throw e;
+        }
+        await sleep(100);
+    }
 }
 
-function robot_left(time) {
-
-    $.ajax({
-
-	    type: "POST",
-	    url: "left",
-	    dataType: "json",
-        async: false,
-        contentType: "application/json; charset=utf-8",
-	    data: JSON.stringify({
-            time: time
-        })
-	});
+async function robot_forward(time) {
+    try {
+        await $.ajax({
+            type: "POST",
+            url: "forward",
+            dataType: "json",
+            contentType: "application/json; charset=utf-8",
+            data: JSON.stringify({
+                time: time
+            })
+        });
+        await wait_for_finished();
+    } catch (e) {
+        if (stop_requested) throw e;
+    }
 }
 
-function robot_right(time) {
+async function robot_backward(time) {
+    try {
+        await $.ajax({
+            type: "POST",
+            url: "backward",
+            dataType: "json",
+            contentType: "application/json; charset=utf-8",
+            data: JSON.stringify({
+                time: time
+            })
+        });
+        await wait_for_finished();
+    } catch (e) {
+        if (stop_requested) throw e;
+    }
+}
 
-    $.ajax({
+async function robot_left(time) {
+    try {
+        await $.ajax({
+            type: "POST",
+            url: "left",
+            dataType: "json",
+            contentType: "application/json; charset=utf-8",
+            data: JSON.stringify({
+                time: time
+            })
+        });
+        await wait_for_finished();
+    } catch (e) {
+        if (stop_requested) throw e;
+    }
+}
 
-	    type: "POST",
-	    url: "right",
-	    dataType: "json",
-        async: false,
-        contentType: "application/json; charset=utf-8",
-	    data: JSON.stringify({
-            time: time
-        })
-	});
+async function robot_right(time) {
+    try {
+        await $.ajax({
+            type: "POST",
+            url: "right",
+            dataType: "json",
+            contentType: "application/json; charset=utf-8",
+            data: JSON.stringify({
+                time: time
+            })
+        });
+        await wait_for_finished();
+    } catch (e) {
+        if (stop_requested) throw e;
+    }
 }
 
 function robot_finished() {
@@ -79,6 +121,52 @@ function robot_detect_obstacle() {
 
 
     return result;
+}
+
+async function robot_camera_pan_left(count) {
+    try {
+        await $.ajax({
+            type: "POST",
+            url: "camera_pan_left",
+            dataType: "json",
+            contentType: "application/json; charset=utf-8",
+            data: JSON.stringify({
+                count: count
+            })
+        });
+        await wait_for_finished();
+    } catch (e) {
+        if (stop_requested) throw e;
+    }
+}
+
+async function robot_camera_pan_right(count) {
+    try {
+        await $.ajax({
+            type: "POST",
+            url: "camera_pan_right",
+            dataType: "json",
+            contentType: "application/json; charset=utf-8",
+            data: JSON.stringify({
+                count: count
+            })
+        });
+        await wait_for_finished();
+    } catch (e) {
+        if (stop_requested) throw e;
+    }
+}
+
+async function robot_camera_center() {
+    try {
+        await $.ajax({
+            type: "POST",
+            url: "camera_center"
+        });
+        await wait_for_finished();
+    } catch (e) {
+        if (stop_requested) throw e;
+    }
 }
 
 
@@ -134,6 +222,27 @@ function create_bool_tool(name, toolname) {
     };
 }
 
+function create_action_tool(name, toolname) {
+
+    Blockly.Blocks[name] = {
+        init: function() {
+          this.appendDummyInput()
+              .appendField(toolname);
+          this.setPreviousStatement(true, null);
+          this.setNextStatement(true, null);
+          this.setColour(120);
+       this.setTooltip("");
+       this.setHelpUrl("");
+        }
+      };
+
+    javascript.javascriptGenerator.forBlock[name] = function(block, generator) {
+        var code = name+'();\n';
+        return code;
+    };     
+
+}
+
 
 $(function() {
 
@@ -143,12 +252,17 @@ $(function() {
     $("#stopButton").attr("disabled", true);
 
     create_tool("robot_forward", "Move Forward")
+    create_tool("robot_backward", "Move Backward")
     create_tool("robot_left", "Move Left")
     create_tool("robot_right", "Move Right")
 
 
     create_bool_tool("robot_finished", "Finished")
     create_bool_tool("robot_detect_obstacle", "Detect Obstacle")
+
+    create_tool("robot_camera_pan_left", "Camera Pan Left")
+    create_tool("robot_camera_pan_right", "Camera Pan Right")
+    create_action_tool("robot_camera_center", "Camera Center")
 
 
 	var workspacePlayground = Blockly.inject(document.getElementById('editor'), { toolbox: document.getElementById('toolbox') });
@@ -189,27 +303,27 @@ $(function() {
 
         Blockly.JavaScript.INFINITE_LOOP_TRAP = null;
 
-        try {
-
-            if (control_timer!=null) {
-                clearTimeout(control_timer);
-                control_timer=null;
+        stop_requested = false;
+        
+        (async function run_control() {
+            try {
+                if (!stop_requested) {
+                    await eval(`(async () => { ${code} })()`);
+                    control_timer = setTimeout(run_control, 1000);
+                }
+            } catch (e) {
+                if (!stop_requested) {
+                    alert(e);
+                }
+                $("#runButton").attr("disabled", false);
+                $("#stopButton").attr("disabled", true);
             }
-
-            function run_control() { 
-                eval(code);
-                control_timer=setTimeout(run_control, 1000);
-            }
-
-            run_control();
-          
-        } catch (e) {
-          alert(e);
-        }
+        })();
             
     });
 
     $("#stopButton").click(function(){
+        stop_requested = true;
         if (control_timer!=null) {
             clearTimeout(control_timer);
             control_timer=null;
