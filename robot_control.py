@@ -137,70 +137,30 @@ class RobotControl():
         
         s=self.robot_connect()
         
-        print(f"Starting left rotation for {count} seconds with obstacle detection...")
+        print(f"Starting left rotation for {count} seconds...")
         
-        # D1 = direction, 
-        # 1=left, 2=right, 3=forward, 4=back
-        # D3 = speed
         tosend={"H": 22, "N": 3, "D1": 1, "D2": 50}
         s.sendall(json.dumps(tosend).encode('utf-8'))
         
-        obstacle_detected = False
-        
-        def state_check(data):
-            nonlocal obstacle_detected
-            
-            if data == "{Heartbeat}":
-                # On each heartbeat, check for obstacles
-                tosend={"H": 22, "N": 21, "D1": 1}
-                s.sendall(json.dumps(tosend).encode('utf-8'))
-            elif "true" in data:
-                print("Obstacle detected during rotation - stopping")
-                obstacle_detected = True
-                self.obstacle_stopped = True
-                return False  # Stop the heartbeat loop
-                
-            return True
-    
-        self.robot_heatbeat(s, count, state_check)
+        self.robot_heatbeat(s, count)
         self.robot_all_stop(s)
         
-        return not obstacle_detected
+        return True
     
     
     def robot_rotate_right(self, count: int):
         
         s=self.robot_connect()
         
-        print(f"Starting right rotation for {count} seconds with obstacle detection...")
+        print(f"Starting right rotation for {count} seconds...")
         
-        # D1 = direction, 
-        # 1=left, 2=right, 3=forward, 4=back
-        # D3 = speed
         tosend={"H": 22, "N": 3, "D1": 2, "D2": 50}
         s.sendall(json.dumps(tosend).encode('utf-8'))
         
-        obstacle_detected = False
-        
-        def state_check(data):
-            nonlocal obstacle_detected
-            
-            if data == "{Heartbeat}":
-                # On each heartbeat, check for obstacles
-                tosend={"H": 22, "N": 21, "D1": 1}
-                s.sendall(json.dumps(tosend).encode('utf-8'))
-            elif "true" in data:
-                print("Obstacle detected during rotation - stopping")
-                obstacle_detected = True
-                self.obstacle_stopped = True
-                return False  # Stop the heartbeat loop
-                
-            return True
-    
-        self.robot_heatbeat(s, count, state_check)
+        self.robot_heatbeat(s, count)
         self.robot_all_stop(s)
         
-        return not obstacle_detected
+        return True
 
     def is_finished(self):
 
